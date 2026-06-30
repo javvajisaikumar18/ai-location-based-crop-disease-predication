@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Plant Disease Detector</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+        <style>
+            body { background: linear-gradient(135deg,#f8fafc,#e6f0ff); }
+            .card { border-radius: 16px; box-shadow: 0 6px 18px rgba(20,20,50,0.08); }
+            .preview { max-height: 250px; object-fit: contain; }
+            .risk-high { color: #b00020; font-weight:700 }
+            .risk-medium { color: #ff8c00; font-weight:700 }
+            .risk-low { color: #0b6e4f; font-weight:700 }
+        </style>
+    </head>
+    <body>
+        <div class="container py-5">
+            <div class="row justify-content-center">
+                <div class="col-md-8">
+                    <div class="card p-4">
+                        <div class="d-flex align-items-center mb-3">
+                            <h3 class="me-auto">Plant Disease Detector</h3>
+                            <small class="text-muted">No API key • Local model optional</small>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Upload a leaf image</label>
+                            <input class="form-control" type="file" id="fileInput" accept="image/*">
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-md-6 text-center">
+                                <img id="preview" class="preview img-fluid rounded" src="" alt="Preview" />
+                            </div>
+                            <div class="col-md-6">
+                                <p id="status" class="text-muted">Choose an image to begin.</p>
+                                <button id="locBtn" class="btn btn-outline-primary btn-sm mb-2">Use my location</button>
+                                <div class="mb-2">
+                                    <input id="lat" placeholder="Latitude" class="form-control form-control-sm mb-1">
+                                    <input id="lon" placeholder="Longitude" class="form-control form-control-sm">
+                                </div>
+                                <button id="analyzeBtn" class="btn btn-primary mt-2">Analyze</button>
+                            </div>
+                        </div>
+
+                        <hr />
+
+                        <div id="results" style="display:none">
+                            <h5>Results</h5>
+                            <p><strong>Disease:</strong> <span id="disease"></span></p>
+                            <p><strong>Confidence:</strong> <span id="confidence"></span></p>
+                            <p><strong>Weather (avg):</strong> <span id="weather"></span></p>
+                            <p><strong>Risk:</strong> <span id="risk" class="me-2"></span> <small id="riskScore" class="text-muted"></small></p>
+                        </div>
+
+                        <div id="error" class="text-danger mt-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            const preview = document.getElementById('preview');
+            const fileInput = document.getElementById('fileInput');
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            const status = document.getElementById('status');
+            const results = document.getElementById('results');
+            const errorBox = document.getElementById('error');
+
+            fileInput.addEventListener('change', () => {
+                const f = fileInput.files[0];
+                if (!f) return;
+                preview.src = URL.createObjectURL(f);
+                status.textContent = 'Ready to analyze.';
+                results.style.display = 'none';
+                errorBox.textContent = '';
+            });
+
+            document.getElementById('locBtn').addEventListener('click', () => {
+                if (!navigator.geolocation) {
+                    errorBox.textContent = 'Geolocation not supported by your browser.';
+                    return;
+                }
+                status.textContent = 'Getting location...';
+                navigator.geolocation.getCurrentPosition((pos) => {
+                    document.getElementById('lat').value = pos.coords.latitude.toFixed(5);
+                    document.getElementById('lon').value = pos.coords.longitude.toFixed(5);
+                    status.textContent = 'Location set.';
+                }, (err) => {
+                    errorBox.textContent = 'Unable to get location: ' + err.message;
+                    status.textContent = '';
+                })
+            });
+
+            analyzeBtn.addEventListener('click', async () => {
+                errorBox.textContent = '';
+                const f = fileInput.files[0];
+                if (!f) { errorBox.textContent = 'Please choose an image.'; return; }
+
+                analyzeBtn.disabled = true;
+                status.textContent = 'Analyzing...';
+
+                const form = new FormData();
+                form.append('image', f);
+                const lat = document.getElementById('lat').value;
+                const lon = document.getElementById('lon').value;
+                if (lat) form.append('lat', lat);
+                if (lon) form.append('lon', lon);
+
+                try {
+                            const r = await fetch('http://localhost:5000/analyze', { method: 'POST', body: form });
+                            let data = null;
+                            try { data = await r.json(); } catch (parseErr) { /* ignore */ }
+                            if (!r.ok) {
+                                const serverMsg = data && (data.error || data.message) ? (data.error || data.message) : `Server error ${r.status}`;
+                                const details = data && data.details ? `: ${data.details}` : '';
+                                throw new Error(serverMsg + details);
+                            }
+                            const dataObj = data || {};
+                    document.getElementById('disease').textContent = data.disease || 'Unknown';
+                            document.getElementById('confidence').textContent = (dataObj.confidence*100 || 0) + '%';
+                    if (data.weather) {
+                                document.getElementById('weather').textContent = `Temp ${dataObj.weather.avg_temp.toFixed(1)}°C • Humidity ${dataObj.weather.avg_humidity.toFixed(0)}%`;
+                    } else {
+                        document.getElementById('weather').textContent = 'No weather data';
+                    }
+                    const riskEl = document.getElementById('risk');
+                    const scoreEl = document.getElementById('riskScore');
+                            if (dataObj.risk && dataObj.risk.risk_level) {
+                                riskEl.textContent = dataObj.risk.risk_level;
+                                scoreEl.textContent = dataObj.risk.risk_score ? `(${dataObj.risk.risk_score}%)` : '';
+                                riskEl.className = dataObj.risk.risk_level === 'High' ? 'risk-high' : (dataObj.risk.risk_level === 'Medium' ? 'risk-medium' : 'risk-low');
+                    } else {
+                        riskEl.textContent = 'Unknown';
+                        scoreEl.textContent = '';
+                    }
+
+                    results.style.display = 'block';
+                    status.textContent = 'Done.';
+                } catch (e) {
+                    errorBox.textContent = e.message;
+                    status.textContent = '';
+                } finally {
+                    analyzeBtn.disabled = false;
+                }
+            });
+        </script>
+    </body>
+</html>
